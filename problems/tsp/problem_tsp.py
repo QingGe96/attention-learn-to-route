@@ -12,13 +12,21 @@ class TSP(object):
 
     @staticmethod
     def get_costs(dataset, pi):
+        """
+            :param dataset: (batch_size, graph_size, node_dim)
+            :param pi: tensor (batch_size, lenth)
+            :return cost: (batch,)
+                    mask: None
+        """
         # Check that tours are valid, i.e. contain 0 to n -1
+        # out=pi.data.new()指定新创建的张量使用与pi相同的数据类型和设备。
         assert (
             torch.arange(pi.size(1), out=pi.data.new()).view(1, -1).expand_as(pi) ==
             pi.data.sort(1)[0]
         ).all(), "Invalid tour"
 
         # Gather dataset in order of tour
+        # 按照路径顺序排列dataset
         d = dataset.gather(1, pi.unsqueeze(-1).expand_as(dataset))
 
         # Length is distance (L2-norm of difference) from each next location from its prev and of last from first
@@ -26,10 +34,24 @@ class TSP(object):
 
     @staticmethod
     def make_dataset(*args, **kwargs):
+        """
+        :param args:
+        :param kwargs:
+                        filename=None, 指定.pkl文件，可以读取数据
+                        size=50, 问题规模
+                        num_samples=1000000 数据集大小
+        :return: TSPDataset
+        """
         return TSPDataset(*args, **kwargs)
 
     @staticmethod
     def make_state(*args, **kwargs):
+        """
+        接受两个参数loc和visited_dtype。返回一个初始化后的StateTSP类
+        :param args:
+        :param kwargs:
+        :return:
+        """
         return StateTSP.initialize(*args, **kwargs)
 
     @staticmethod
@@ -59,6 +81,7 @@ class TSPDataset(Dataset):
 
         self.data_set = []
         if filename is not None:
+            # 如果指定.pkl文件，可以加载数据集
             assert os.path.splitext(filename)[1] == '.pkl'
 
             with open(filename, 'rb') as f:
@@ -66,6 +89,7 @@ class TSPDataset(Dataset):
                 self.data = [torch.FloatTensor(row) for row in (data[offset:offset+num_samples])]
         else:
             # Sample points randomly in [0, 1] square
+            # 通过循环生成数据集，生成的格式是一个list，其中每个元素是二维tensor
             self.data = [torch.FloatTensor(size, 2).uniform_(0, 1) for i in range(num_samples)]
 
         self.size = len(self.data)

@@ -37,17 +37,21 @@ class MultiHeadAttention(nn.Module):
         self.key_dim = key_dim
 
         self.norm_factor = 1 / math.sqrt(key_dim)  # See Attention is all you need
-
+        # 定义可学习参数
         self.W_query = nn.Parameter(torch.Tensor(n_heads, input_dim, key_dim))
         self.W_key = nn.Parameter(torch.Tensor(n_heads, input_dim, key_dim))
         self.W_val = nn.Parameter(torch.Tensor(n_heads, input_dim, val_dim))
 
         self.W_out = nn.Parameter(torch.Tensor(n_heads, val_dim, embed_dim))
 
-        self.init_parameters()
+        self.init_parameters()   # 调用下面的初始化方法初始化参数
 
     def init_parameters(self):
-
+        """
+        每个参数的初始化采用了均匀分布的随机值，
+        范围是[-stdv, stdv]，其中stdv的计算公式是1 / math.sqrt(param.size(-1))。
+        :return:
+        """
         for param in self.parameters():
             stdv = 1. / math.sqrt(param.size(-1))
             param.data.uniform_(-stdv, stdv)
@@ -72,13 +76,17 @@ class MultiHeadAttention(nn.Module):
         assert input_dim == self.input_dim, "Wrong embedding dimension of input"
 
         hflat = h.contiguous().view(-1, input_dim)
-        qflat = q.contiguous().view(-1, input_dim)
+        qflat = q.contiguous().view(-1, input_dim)  # (batch_size * n_query, input_dim)
 
         # last dimension can be different for keys and values
         shp = (self.n_heads, batch_size, graph_size, -1)
         shp_q = (self.n_heads, batch_size, n_query, -1)
 
-        # Calculate queries, (n_heads, n_query, graph_size, key/val_size)
+        # Calculate queries, (n_heads, batch_size, n_query, key/val_size)
+        # qflat: (batch_size * n_query, input_dim)
+        # W_query: (n_heads, input_dim, key_dim)
+        # 这里的matmul使用了广播机制，实际上将qflat在第一个维度上广播了n_heads次
+        # 输出维度: (n_heads, batch_size * n_query, key_dim)
         Q = torch.matmul(qflat, self.W_query).view(shp_q)
         # Calculate keys and values (n_heads, batch_size, graph_size, key/val_size)
         K = torch.matmul(hflat, self.W_key).view(shp)
@@ -89,19 +97,22 @@ class MultiHeadAttention(nn.Module):
 
         # Optionally apply mask to prevent attention
         if mask is not None:
+            # mask: (batch_size, n_query, graph_size)
             mask = mask.view(1, batch_size, n_query, graph_size).expand_as(compatibility)
             compatibility[mask] = -np.inf
 
-        attn = torch.softmax(compatibility, dim=-1)
+        attn = torch.softmax(compatibility, dim=-1)  # (n_heads, batch_size, n_query, graph_size)
 
         # If there are nodes with no neighbours then softmax returns nan so we fix them to 0
         if mask is not None:
             attnc = attn.clone()
             attnc[mask] = 0
             attn = attnc
-
+        # attn: (n_heads, batch_size, n_query, graph_size)
+        # V: (n_heads, batch_size, graph_size, key/val_size)
+        # heads: (n_heads, batch_size, n_query, key/val_size)
         heads = torch.matmul(attn, V)
-
+        # W_out: (n_heads, val_dim, embed_dim)
         out = torch.mm(
             heads.permute(1, 2, 0, 3).contiguous().view(-1, self.n_heads * self.val_dim),
             self.W_out.view(-1, self.embed_dim)
@@ -152,7 +163,11 @@ class Normalization(nn.Module):
 
 
 class MultiHeadAttentionLayer(nn.Sequential):
-
+    """
+    多头注意力块，
+    初始化参数包括n_heads; embed_dim;
+    feed_forward_hidden, 默认512; normalization, 默认'batch'
+    """
     def __init__(
             self,
             n_heads,
@@ -201,7 +216,13 @@ class GraphAttentionEncoder(nn.Module):
         ))
 
     def forward(self, x, mask=None):
+        """
 
+        :param x: 原始输入或初始嵌入后的输入，与模型初始化有关，默认输入初始嵌入后的输入
+        :param mask: None 编码器不需要掩码
+        :return: h: 编码器输出的最终节点嵌入 (batch_size, graph_size, embed_dim)
+                 h.mean: 图嵌入 (batch_size, embed_dim)，后面没有用这个，重新计算了一遍
+        """
         assert mask is None, "TODO mask not yet supported!"
 
         # Batch multiply to get initial embeddings of nodes

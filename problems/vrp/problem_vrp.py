@@ -16,17 +16,26 @@ class CVRP(object):
 
     @staticmethod
     def get_costs(dataset, pi):
+        """
+
+        :param dataset:
+        :param pi:
+        :return: cost:
+                 mask: None
+        """
         batch_size, graph_size = dataset['demand'].size()
         # Check that tours are valid, i.e. contain 0 to n -1
         sorted_pi = pi.data.sort(1)[0]
 
         # Sorting it should give all zeros at front and then 1...n
+        # 判断路径是否合法
         assert (
             torch.arange(1, graph_size + 1, out=pi.data.new()).view(1, -1).expand(batch_size, graph_size) ==
             sorted_pi[:, -graph_size:]
         ).all() and (sorted_pi[:, :-graph_size] == 0).all(), "Invalid tour"
 
         # Visiting depot resets capacity so we add demand = -capacity (we make sure it does not become negative)
+        # 将仓库需求和城市需求concat，仓库需求设为负的车辆容量
         demand_with_depot = torch.cat(
             (
                 torch.full_like(dataset['demand'][:, :1], -CVRP.VEHICLE_CAPACITY),
@@ -34,17 +43,20 @@ class CVRP(object):
             ),
             1
         )
-        d = demand_with_depot.gather(1, pi)
+        d = demand_with_depot.gather(1, pi)   # 按路径顺序排列需求
 
-        used_cap = torch.zeros_like(dataset['demand'][:, 0])
+        used_cap = torch.zeros_like(dataset['demand'][:, 0])   # 已使用容量
         for i in range(pi.size(1)):
             used_cap += d[:, i]  # This will reset/make capacity negative if i == 0, e.g. depot visited
             # Cannot use less than 0
             used_cap[used_cap < 0] = 0
+            # 判断路径是否超出容量限制
             assert (used_cap <= CVRP.VEHICLE_CAPACITY + 1e-5).all(), "Used more than capacity"
 
         # Gather dataset in order of tour
+        # 将仓库需求和城市需求concat，仓库需求设为负的车辆容量
         loc_with_depot = torch.cat((dataset['depot'][:, None, :], dataset['loc']), 1)
+        # 按路径顺序排列城市坐标
         d = loc_with_depot.gather(1, pi[..., None].expand(*pi.size(), loc_with_depot.size(-1)))
 
         # Length is distance (L2-norm of difference) of each next location to its prev and of first and last to depot
@@ -56,6 +68,15 @@ class CVRP(object):
 
     @staticmethod
     def make_dataset(*args, **kwargs):
+        """
+        初始化一个VRPDateset
+        :param args:
+        :param kwargs: size, num_samples  注意size只能选择10, 20, 50, 100
+        :return: 数据集实例，字典
+                 {'loc' :
+                  'demand' :
+                  'depot' : }
+        """
         return VRPDataset(*args, **kwargs)
 
     @staticmethod
@@ -127,6 +148,15 @@ class SDVRP(object):
 
     @staticmethod
     def make_dataset(*args, **kwargs):
+        """
+        初始化一个VRPDateset
+        :param args:
+        :param kwargs: size, num_samples  注意size只能选择10, 20, 50, 100
+        :return: 数据集实例，字典
+                 {'loc' :
+                  'demand' :
+                  'depot' : }
+        """
         return VRPDataset(*args, **kwargs)
 
     @staticmethod
@@ -152,6 +182,11 @@ class SDVRP(object):
 
 
 def make_instance(args):
+    """
+    从.pkl文件读取数据时用，返回数据集需要的字典格式
+    :param args:
+    :return:
+    """
     depot, loc, demand, capacity, *args = args
     grid_size = 1
     if len(args) > 0:
@@ -166,6 +201,14 @@ def make_instance(args):
 class VRPDataset(Dataset):
     
     def __init__(self, filename=None, size=50, num_samples=1000000, offset=0, distribution=None):
+        """
+
+        :param filename: 文件名.pkl
+        :param size: 给定城市规模
+        :param num_samples: 数据集大小
+        :param offset:
+        :param distribution:
+        """
         super(VRPDataset, self).__init__()
 
         self.data_set = []
@@ -184,7 +227,7 @@ class VRPDataset(Dataset):
                 20: 30.,
                 50: 40.,
                 100: 50.
-            }
+            }   # CAPACITIES与size相关，只能选择10, 20, 50, 100
 
             self.data = [
                 {

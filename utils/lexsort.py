@@ -3,6 +3,12 @@ import numpy as np
 
 
 def torch_lexsort(keys, dim=-1):
+    """
+    用于在PyTorch中执行按字典顺序排序的操作。
+    :param keys:
+    :param dim:
+    :return:
+    """
     if keys[0].is_cuda:
         return _torch_lexsort_cuda(keys, dim)
     else:
@@ -12,6 +18,7 @@ def torch_lexsort(keys, dim=-1):
 
 def _torch_lexsort_cuda(keys, dim=-1):
     """
+    在GPU上按字典顺序排序的函数
     Function calculates a lexicographical sort order on GPU, similar to np.lexsort
     Relies heavily on undocumented behavior of torch.sort, namely that when sorting more than
     2048 entries in the sorting dim, it performs a sort using Thrust and it uses a stable sort

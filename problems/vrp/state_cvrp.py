@@ -4,6 +4,33 @@ from utils.boolmask import mask_long2bool, mask_long_scatter
 
 
 class StateCVRP(NamedTuple):
+    """
+    这段代码是一个用于解决CVRP（车辆路径问题）的状态类。代码中定义了一个名为StateCVRP的命名元组（NamedTuple）以及一些与该类相关的方法。
+    StateCVRP类具有以下属性：
+    coords：一个torch.Tensor，表示各个节点的坐标（包括仓库和客户节点）。
+    demand：一个torch.Tensor，表示各个节点的需求量。
+    ids：一个torch.Tensor，用于索引coords和demand中正确的行。
+    prev_a：一个torch.Tensor，表示上一步选择的动作（节点）。
+    used_capacity：一个torch.Tensor，表示已使用的车辆容量。
+    visited_：一个torch.Tensor，表示已访问的节点。
+    lengths：一个torch.Tensor，表示已经完成路径的长度。
+    cur_coord：一个torch.Tensor，表示当前坐标。
+    i：一个torch.Tensor，表示当前步骤。
+    StateCVRP类还定义了一些方法，包括：
+
+    visited方法：返回一个表示已访问节点的布尔掩码。
+    dist方法：计算节点之间的距离。
+    __getitem__方法：用于索引StateCVRP对象的各个属性。
+    initialize静态方法：用于初始化StateCVRP对象。
+    get_final_cost方法：计算最终路径的成本。
+    update方法：更新状态，根据选择的动作更新各个属性。
+    all_finished方法：检查是否已完成所有路径。
+    get_finished方法：获取已完成的路径。
+    get_current_node方法：获取当前节点。
+    get_mask方法：获取可行动作的掩码。
+    construct_solutions方法：构建解决方案。
+    该代码用于实现CVRP问题的求解算法，提供了状态的表示和相关操作。
+    """
     # Fixed input
     coords: torch.Tensor  # Depot + loc
     demand: torch.Tensor

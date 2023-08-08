@@ -44,7 +44,7 @@ def run(opts):
     opts.device = torch.device("cuda:0" if opts.use_cuda else "cpu")
 
     # Figure out what's the problem
-    # 返回一个对应问题的实例
+    # 返回问题类
     problem = load_problem(opts.problem)
 
     # Load data from load_path
@@ -77,7 +77,7 @@ def run(opts):
     ).to(opts.device)
 
     if opts.use_cuda and torch.cuda.device_count() > 1:
-        model = torch.nn.DataParallel(model)
+        model = torch.nn.DataParallel(model)   # 并行训练模型
 
     # Overwrite model parameters by parameters to load
     model_ = get_inner_model(model)

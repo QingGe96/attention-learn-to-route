@@ -3,6 +3,26 @@ from typing import NamedTuple
 
 
 class StateSDVRP(NamedTuple):
+    """
+    StateSDVRP包含以下成员：
+    coords: 表示地点的坐标的张量。
+    demand: 表示各个地点的需求的张量。
+    ids: 用于索引coords和demand张量中正确行的原始数据索引的张量。
+    prev_a: 表示上一步选择的动作的张量。
+    used_capacity: 表示已使用的车辆容量的张量。
+    demands_with_depot: 表示剩余需求的张量。
+    lengths: 表示已经完成路径长度的张量。
+    cur_coord: 表示当前坐标的张量。
+    i: 表示步数的张量。
+    此外，StateSDVRP还包含了一些静态方法和实例方法，用于对状态进行初始化、更新状态、获取最终成本、判断是否已完成等操作。
+    StateSDVRP的初始化方法initialize接受一个输入input作为参数，并根据输入的数据对状态进行初始化。
+    get_final_cost方法用于计算最终的成本，其中包括已经完成的路径长度和当前坐标到起始坐标的欧氏距离。
+    update方法用于更新状态，根据选择的动作对状态的各个成员进行更新。
+    all_finished方法判断是否已经完成了所有的动作。
+    get_current_node方法用于获取当前节点。
+    get_mask方法用于获取可行动作的掩码，表示哪些动作是可行的，哪些是不可行的。
+    construct_solutions方法用于构造解决方案。
+    """
     # Fixed input
     coords: torch.Tensor
     demand: torch.Tensor

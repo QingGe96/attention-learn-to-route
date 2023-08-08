@@ -93,7 +93,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     :param baseline: baseline
     :param lr_scheduler:
     :param epoch: 当前epoch数(如果是第一次训练就是0)
-    :param val_dataset: 测试数据集
+    :param val_dataset: 测试数据集，在run.py中生成
     :param problem: 问题类型，TSP包含两个函数get_costs()和make_dataset(返回TSP数据集，如果有load则load，否则创建一个新的)
     :param opts: 参数设置
     :return:
@@ -109,7 +109,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     # 每个epoch使用一个新的训练数据集
     training_dataset = baseline.wrap_dataset(problem.make_dataset(
         size=opts.graph_size, num_samples=opts.epoch_size, distribution=opts.data_distribution))
-    training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=1)
+    training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=0)
 
     # Put model in train mode!
     model.train()
@@ -152,7 +152,7 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
 
     if not opts.no_tensorboard:
         tb_logger.log_value('val_avg_reward', avg_reward, step)
-
+    # 训练一个epoch后，尝试更新baseline
     baseline.epoch_callback(model, epoch)
 
     # lr_scheduler should be called at end of epoch
@@ -182,7 +182,7 @@ def train_batch(
     :param opts:
     :return:
     """
-    x, bl_val = baseline.unwrap_batch(batch)         # x表示批量样本， bl_val表示对应的baseline
+    x, bl_val = baseline.unwrap_batch(batch)         # x表示批量样本， bl_val表示对应的baseline评估值
     x = move_to(x, opts.device)
     bl_val = move_to(bl_val, opts.device) if bl_val is not None else None
 
@@ -191,6 +191,7 @@ def train_batch(
     cost, log_likelihood = model(x)
 
     # Evaluate baseline, get baseline loss if any (only for critic)
+    # 除rollout baseline外bl_val在这里计算
     bl_val, bl_loss = baseline.eval(x, cost) if bl_val is None else (bl_val, 0)
 
     # Calculate loss

@@ -9,8 +9,10 @@ class Baseline(object):
     """
     创建一个baseline基类，继承这个类必须要重写eval方法
     提供四种baseline：Nobaseline, ExponentialBaseline, CriticBaseline, RolloutBaseline
-    baseline的通用方法：wrap_dataset: 包装数据集(rollout baseline)
-                      unwrap_batch: 从中取一个batch
+    baseline的通用方法：wrap_dataset: 包装数据集(只有rollout baseline中，除了dataset外还包装了baseline的值)
+                      unwrap_batch: 返回一个batch的数据
+                                    在rollout baseline中还返回这个batch对应的baseline值
+                                    其他baseline中这个值为None
                       eval: 进行baseline评估，返回: v, loss,
                             其中v表示baseline计算的预测v值；loss表示v值和真实值(TSP)的MSE损失
                       get_learnable_parameters: 返回需要学习的参数列表，目前只有critic baseline需要调用，把参数列表传给优化器
@@ -241,7 +243,9 @@ class RolloutBaseline(Baseline):
 
 
 class BaselineDataset(Dataset):
-
+    """
+    在rollout baseline中，提前包装baseline的值
+    """
     def __init__(self, dataset=None, baseline=None):
         super(BaselineDataset, self).__init__()
 

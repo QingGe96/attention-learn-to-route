@@ -30,8 +30,8 @@ class AttentionModelFixed(NamedTuple):
     这个类有五个成员变量：
       - node_embeddings: 表示节点嵌入（向量表示）的张量
       - context_node_projected: 表示上下文节点的投影的张量
-      - glimpse_key: 表示瞥见关键字的张量。dim 0是头部（head）
-      - glimpse_val: 表示瞥见值的张量。dim 0是头部（head）
+      - glimpse_key: 表示瞥见关键字的张量。dim 0是头部（head）  # (n_heads, batch_size, num_steps, graph_size, head_dim)
+      - glimpse_val: 表示瞥见值的张量。dim 0是头部（head）     # (n_heads, batch_size, num_steps, graph_size, head_dim)
       - logit_key: 表示逻辑关键字的张量
     """
     node_embeddings: torch.Tensor
@@ -129,11 +129,15 @@ class AttentionModel(nn.Module):
         )
 
         # For each node we compute (glimpse key, glimpse value, logit key) so 3 * embedding_dim
-        self.project_node_embeddings = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False)
-        self.project_fixed_context = nn.Linear(embedding_dim, embedding_dim, bias=False)
-        self.project_step_context = nn.Linear(step_context_dim, embedding_dim, bias=False)  # Linear(2*embedding_dim, embedding_dim)
+        self.project_node_embeddings = nn.Linear(embedding_dim, 3 * embedding_dim, bias=False)  # 对编码器节点嵌入的投影
+        self.project_fixed_context = nn.Linear(embedding_dim, embedding_dim, bias=False)  # 对图嵌入的投影
+        # 对其他上下文向量的投影，其输入维度与问题类型有关
+        # In TSP, Linear(2*embedding_dim, embedding_dim)
+        # In VRP, step_context_dim = embedding_dim + 1
+        self.project_step_context = nn.Linear(step_context_dim, embedding_dim, bias=False)
         assert embedding_dim % n_heads == 0
         # Note n_heads * val_dim == embedding_dim so input to project_out is embedding_dim
+        # 输出的投影
         self.project_out = nn.Linear(embedding_dim, embedding_dim, bias=False)
 
     def set_decode_type(self, decode_type, temp=None):
@@ -143,16 +147,18 @@ class AttentionModel(nn.Module):
 
     def forward(self, input, return_pi=False):
         """
-        :param input: (batch_size, graph_size, node_dim) input node features
+        :param input: tsp: (batch_size, graph_size, node_dim) input node features
+                      vrp: 字典
         :return_pi: 是否返回预测的城市序列
         :return: cost: 输出序列的长度
                  ll: 得到整条轨迹的对数概率 (batch,)
                  pi: 输出序列 (batch, lenth)
         """
-
+        # 使用checkpoint技术切分计算，解决内存不足问题
         if self.checkpoint_encoder and self.training:  # Only checkpoint if we need gradients
             embeddings, _ = checkpoint(self.embedder, self._init_embed(input))
         else:
+            # embeddings: (batch_size, graph_size, embed_dim)
             embeddings, _ = self.embedder(self._init_embed(input))
 
         # _log_p: (batch, num_steps, graph_size)
@@ -224,7 +230,11 @@ class AttentionModel(nn.Module):
         return log_p.sum(1)
 
     def _init_embed(self, input):
+        """
 
+        :param input: 原始输入
+        :return: 原始输入的嵌入
+        """
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
             if self.is_vrp:
                 features = ('demand', )
@@ -350,22 +360,24 @@ class AttentionModel(nn.Module):
         """
 
         :param embeddings: (batch_size, graph_size, embed_dim)
-        :param num_steps:
-        :return:
+        :param num_steps: 固定为1
+        :return: AttentionModelFixed
         """
         # The fixed context projection of the graph embedding is calculated only once for efficiency
+        # 计算图嵌入，是编码器所有节点嵌入的平均，fixed
         graph_embed = embeddings.mean(1)  # (batch_size, embed_dim)
         # fixed context = (batch_size, 1, embed_dim) to make broadcastable with parallel timesteps
         fixed_context = self.project_fixed_context(graph_embed)[:, None, :]  # (batch_size, 1, embed_dim)
 
         # The projection of the node embeddings for the attention is calculated once up front
+        # 将节点嵌入投影，拆分得到glimpse_key, glimpse_val, logit_key
         # 每个的维度是(batch_size, 1, graph_size, embed_dim)
         glimpse_key_fixed, glimpse_val_fixed, logit_key_fixed = \
             self.project_node_embeddings(embeddings[:, None, :, :]).chunk(3, dim=-1)
 
         # No need to rearrange key for logit as there is a single head
         # 把glimpse_key_fixed和glimpse_val_fixed转成多头的形状
-
+        # n_heads * head_dim = embed_dim
         fixed_attention_node_data = (
             self._make_heads(glimpse_key_fixed, num_steps),  # (n_heads, batch_size, num_steps, graph_size, head_dim)
             self._make_heads(glimpse_val_fixed, num_steps),  # (n_heads, batch_size, num_steps, graph_size, head_dim)
@@ -417,11 +429,12 @@ class AttentionModel(nn.Module):
         :param embeddings: (batch_size, graph_size, embed_dim)
         :param prev_a: (batch_size, num_steps)
         :param first_a: Only used when num_steps = 1, action of first step or None if first step
-        :return: (batch_size, num_steps, context_dim)
+        :return: 随状态变化的上下文向量 (batch_size, num_steps, context_dim)
         """
 
-        current_node = state.get_current_node()
-        batch_size, num_steps = current_node.size()
+        current_node = state.get_current_node()      # 上一步访问节点的索引
+        # In TSP, VRP, num_steps=1
+        batch_size, num_steps = current_node.size()  # num_steps=1
 
         if self.is_vrp:
             # Embedding of previous node + remaining capacity
@@ -471,11 +484,12 @@ class AttentionModel(nn.Module):
         else:  # TSP
             # TSP的num_steps好像一定设置为1，猜想num_steps可能是车辆数？
             if num_steps == 1:  # We need to special case if we have only 1 step, may be the first or not
-                if state.i.item() == 0:   # 这里的i表示解码步数
+                if state.i.item() == 0:   # 这里的i表示解码步数，第一步返回占位向量
                     # First and only step, ignore prev_a (this is a placeholder)
-                    # (batch, 1, 2*embedding_dim)
+                    # (batch, 1, 2*embedding_dim) expand广播
                     return self.W_placeholder[None, None, :].expand(batch_size, 1, self.W_placeholder.size(-1))
                 else:
+                    # 非第一步，从embeddings中按照cat的索引收集元素
                     return embeddings.gather(
                         1,
                         torch.cat((state.first_a, current_node), 1)[:, :, None].expand(batch_size, 2, embeddings.size(-1))
@@ -496,14 +510,26 @@ class AttentionModel(nn.Module):
             ), 1)
 
     def _one_to_many_logits(self, query, glimpse_K, glimpse_V, logit_K, mask):
+        """
+
+        :param query: 论文中投影后的上下文向量
+        :param glimpse_K: embeddings的投影
+        :param glimpse_V: embeddings的投影
+        :param logit_K: embeddings的投影
+        :param mask: 根据访问状态得到的mask矩阵
+        :return: log_p: 下一步访问的对数概率
+                 glimpse: 最终的查询张量
+        """
         # query: (batch, 1, embedding_dim)
         batch_size, num_steps, embed_dim = query.size()
         key_size = val_size = embed_dim // self.n_heads
 
         # Compute the glimpse, rearrange dimensions so the dimensions are (n_heads, batch_size, num_steps, 1, key_size)
+        # 表示投影后的上下文查询向量
         glimpse_Q = query.view(batch_size, num_steps, self.n_heads, 1, key_size).permute(2, 0, 1, 3, 4)
 
         # Batch matrix multiplication to compute compatibilities (n_heads, batch_size, num_steps, graph_size)
+        # glimpse_K是embeddings投影后得到的，在论文中是h_{(c)}^{N+1}右侧的神经元
         compatibility = torch.matmul(glimpse_Q, glimpse_K.transpose(-2, -1)) / math.sqrt(glimpse_Q.size(-1))
         if self.mask_inner:
             assert self.mask_logits, "Cannot mask inner without masking logits"
@@ -513,6 +539,7 @@ class AttentionModel(nn.Module):
         heads = torch.matmul(torch.softmax(compatibility, dim=-1), glimpse_V)
 
         # Project to get glimpse/updated context node embedding (batch_size, num_steps, embedding_dim)
+        # 论文中的h_{(c)}^{N+1}
         glimpse = self.project_out(
             heads.permute(1, 2, 3, 0, 4).contiguous().view(-1, num_steps, 1, self.n_heads * val_size))
 
@@ -521,6 +548,7 @@ class AttentionModel(nn.Module):
         final_Q = glimpse
         # Batch matrix multiplication to compute logits (batch_size, num_steps, graph_size)
         # logits = 'compatibility'
+        # logits: 论文中最下面的q{(c)}
         logits = torch.matmul(final_Q, logit_K.transpose(-2, -1)).squeeze(-2) / math.sqrt(final_Q.size(-1))
 
         # From the logits compute the probabilities by clipping, masking and softmax
@@ -532,9 +560,15 @@ class AttentionModel(nn.Module):
         return logits, glimpse.squeeze(-2)
 
     def _get_attention_node_data(self, fixed, state):
+        """
+
+        :param fixed: 预计算出的固定嵌入
+        :param state:
+        :return:
+        """
 
         if self.is_vrp and self.allow_partial:
-
+            # 如果允许分割需求，则需要增加嵌入需求信息
             # Need to provide information of how much each node has already been served
             # Clone demands as they are needed by the backprop whereas they are updated later
             glimpse_key_step, glimpse_val_step, logit_key_step = \
@@ -551,6 +585,12 @@ class AttentionModel(nn.Module):
         return fixed.glimpse_key, fixed.glimpse_val, fixed.logit_key
 
     def _make_heads(self, v, num_steps=None):
+        """
+
+        :param v: (batch_size, 1, graph_size, embed_dim)
+        :param num_steps: 固定为1
+        :return:
+        """
         assert num_steps is None or v.size(1) == 1 or v.size(1) == num_steps
 
         return (

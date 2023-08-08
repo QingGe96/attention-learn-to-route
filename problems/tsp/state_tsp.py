@@ -11,8 +11,8 @@ class StateTSP(NamedTuple):
     loc：旅行地点的位置向量，大小为 (batch_size, n_loc, feature_dim)。
     dist：旅行地点之间的距离矩阵，大小为 (batch_size, n_loc, n_loc)。
     ids：用于索引原始数据行的张量，大小为 (batch_size, 1)。
-    first_a：第一步动作的张量，大小为 (batch_size, 1)。
-    prev_a：上一步动作的张量，大小为 (batch_size, 1)。
+    first_a：第一步动作的索引张量，大小为 (batch_size, 1)。
+    prev_a：上一步动作的索引张量，大小为 (batch_size, 1)。
     visited_：表示已访问节点的张量。
     lengths：路径长度的张量，大小为 (batch_size, 1)。
     cur_coord：当前坐标的张量，大小为 (batch_size, feature_dim)。
@@ -69,7 +69,7 @@ class StateTSP(NamedTuple):
     def initialize(loc, visited_dtype=torch.uint8):
 
         batch_size, n_loc, _ = loc.size()
-        prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=loc.device)   # (batch,1)的全0向量
+        prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=loc.device)   # (batch, 1)的全0向量
         return StateTSP(
             loc=loc,   # 基础输入，(batch, lenth, feature_dim)
             dist=(loc[:, :, None, :] - loc[:, None, :, :]).norm(p=2, dim=-1),   # 距离矩阵
@@ -101,18 +101,18 @@ class StateTSP(NamedTuple):
         """
         更新prev_a(上一步动作)，cur_coord(当前坐标)，lengths(路径长度)，
         first_a(第一步动作，如果是第一次解码要更新)，visited_(已访问节点)
-        :param selected:
+        :param selected: 当前时间步选择输出的节点 Tensor (batch,)
         :return:
         """
         # Update the state
-        prev_a = selected[:, None]  # Add dimension for step
+        prev_a = selected[:, None]  # Add dimension for step (batch, 1)
 
         # Add the length
         # cur_coord = self.loc.gather(
         #     1,
         #     selected[:, None, None].expand(selected.size(0), 1, self.loc.size(-1))
         # )[:, 0, :]
-        cur_coord = self.loc[self.ids, prev_a]
+        cur_coord = self.loc[self.ids, prev_a]   # (batch, feature_dim)
         lengths = self.lengths
         if self.cur_coord is not None:  # Don't add length for first action (selection of start node)
             lengths = self.lengths + (cur_coord - self.cur_coord).norm(p=2, dim=-1)  # (batch_dim, 1)
@@ -122,7 +122,7 @@ class StateTSP(NamedTuple):
 
         if self.visited_.dtype == torch.uint8:
             # Add one dimension since we write a single value
-            visited_ = self.visited_.scatter(-1, prev_a[:, :, None], 1)
+            visited_ = self.visited_.scatter(-1, prev_a[:, :, None], 1)  # 广播prev_a，在-1维度上对应位置赋值为1
         else:
             visited_ = mask_long_scatter(self.visited_, prev_a)
         # 由于状态是一个命名元组(NamedTuple)，不可被修改，调用_replace方法返回一个修改后的新元组
